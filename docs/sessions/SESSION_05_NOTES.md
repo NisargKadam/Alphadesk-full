@@ -23,14 +23,17 @@
 11. Terminal — eval again: hybrid ≥ vector. The number moved because the code did.
 12. `backend/app/tools.py` — `rerank_filings()`: the cross-encoder funnel; lazy model load; config-level swap to a BGE reranker noted.
 13. `backend/app/graph.py` — `retrieve` swaps the LLM re-rank for `rerank_filings` behind the same `RERANK_ENABLED` flag; citations gain `score`/`stage`. Delete the Session 03 `Ranking` model — code that leaves is as teachable as code that arrives.
-14. Terminal — eval a third time: the full gradient (vector < hybrid < re-ranked) on screen. **The table is the demo.**
+14. Terminal — eval a third time: the full gradient (vector < hybrid < re-ranked) on screen.
+15. `frontend/src/lib/stream.ts` + `EvidencePanel.tsx` — `score`/`stage` on the chips. The SSE parser: still untouched since Session 01.
+16. `frontend/src/App.tsx` + `ChatWindow.tsx` — Session 05 label and suggestions.
+17. Browser — demo script; expand evidence and read the stage labels.
 
 ## Demo script
 
 0. `python -m app.eval_retrieval` — the table shows the gradient live (our run: MRR 0.883 → 0.900 → 0.933, hit@1 0.80 → 0.80 → 0.90).
-1. **"How many ProLine-9 controllers did SampleCo ship this year?"** — keyword-heavy: BM25 puts the exact-figure passage on top where pure vectors wobble. Read the `stage` labels in the `citations` payload.
+1. **"How many ProLine-9 controllers did SampleCo ship this year?"** — keyword-heavy: BM25 puts the exact-figure passage on top where pure vectors wobble. Point at the evidence chips' stage labels.
 2. **"How is SampleCo protecting itself from generic AI models?"** — a paraphrase sharing almost no words with the filing; watch the re-ranker reorder the candidates (flip `RERANK_ENABLED` and re-ask to see the difference).
-3. Flip `RERANK_ENABLED=false` and re-ask question 2 — the evidence order in the `citations` event visibly degrades, and the eval table's "hybrid (RRF)" row *is* that configuration's number. Point at both: evaluation as a habit, not a ceremony.
+3. Flip `RERANK_ENABLED=false` and re-ask question 2 — the evidence order in the app visibly degrades, and the eval table's "hybrid (RRF)" row *is* that configuration's number. Point at both: evaluation as a habit, not a ceremony.
 
 ## Where it breaks
 

@@ -25,7 +25,7 @@ cp .env.example .env       # then put your OpenAI API key in .env
 
 ```bash
 curl -N localhost:8000/api/chat -H 'Content-Type: application/json' \
-  -d '{"message":"How many ProLine-9 controllers did SampleCo ship this year?","thread_id":"t1"}'
+  -d '{"message":"Brief me on Apple — price action, latest news, and risk factors.","thread_id":"t1"}'
 ```
 
 ## Streaming protocol
@@ -50,8 +50,10 @@ renderer per type):
 | `node`      | S02   | `name`     | A graph node started — the pipeline, visible.    |
 | `interrupt` | S02   | `question` | The graph paused for a human answer (see below). |
 | `citations` | S03   | `items`    | The numbered evidence the answer cites as `[n]`: `[{id, source, page, snippet}]`. Since S05 each item also carries `score` and `stage` (`"vector" \| "hybrid" \| "reranked"`). |
-| `tool_call` | S04   | `name`, `args` | The model requested a tool call — work in flight. |
-| `tool_result` | S04 | `name`, `payload` | The tool returned — live data (or its `error`). |
+| `tool_call` | S04   | `name`, `args` | The model requested a tool call — work in flight. Since S06 carries `agent`, the specialist that called it. |
+| `tool_result` | S04 | `name`, `payload` | The tool returned — live data (or its `error`). Since S06 carries `agent`. |
+| `handoff`   | S06   | `from`, `to`, `task` | The supervisor delegated a task to a specialist. |
+| `agent`     | S06   | `name`, `status` | A specialist started (`running`) or finished (`done`). |
 
 Since Session 02 every request also carries a client-generated `thread_id` —
 the conversation state lives server-side in the graph checkpointer, keyed by
@@ -116,6 +118,7 @@ calls, consumed by an external agent.
 2. **LangChain & LangGraph** — StateGraph, thread state, HITL interrupt
 3. **Retrieval & RAG** — filings ingest, Chroma retrieval, cited answers
 4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph
-5. **Enterprise RAG at Scale** — hybrid retrieval, parent-child chunks, re-ranking, eval harness *(you are here)*
-6. – 10. Roadmap: multi-agent, memory, guardrails, observability,
+5. **Enterprise RAG at Scale** — hybrid retrieval, parent-child chunks, re-ranking, eval harness
+6. **Multi-Agent Systems** — supervisor, typed hand-offs, specialist sub-agents *(you are here)*
+7. – 10. Roadmap: memory, guardrails, observability,
    deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).

@@ -28,11 +28,12 @@ time is spent on frontend code.
    harness (hand-rolled hit@k and MRR) so changes are judged by numbers, hybrid
    (BM25 + vector, RRF-fused) search, parent-child chunking, and cross-encoder
    re-ranking replacing the lightweight model-call re-rank.
+6. **Multi-Agent Systems** — the single graph becomes a supervisor coordinating
+   Market, Filings Analyst, and News specialists plus a Report Writer, with
+   hand-offs as typed contracts (`Task` out, `AgentResult` back) so evidence
+   survives the trip. Every delegation is announced on the wire: one `handoff`
+   event per task, `agent` status events as each specialist runs.
    *← implemented through here*
-6. **Multi-Agent Systems** *(ROADMAP)* — the single graph becomes a supervisor
-   coordinating Market, Filings Analyst, News, and Report Writer sub-agents with
-   clean hand-offs. The event stream already carries arbitrary node paths, so the
-   deeper architecture appears on the wire for free.
 7. **Memory & State** *(ROADMAP)* — the in-process `MemorySaver` checkpointer
    becomes durable storage, a long-term store holds the user's watchlist and
    preferences across threads, and long conversations get summarized instead of

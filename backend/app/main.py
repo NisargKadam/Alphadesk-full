@@ -1,7 +1,8 @@
 """AlphaDesk API — one streaming chat endpoint, plus resume for HITL.
 
 The SSE event vocabulary grows one session at a time (see README,
-"Streaming protocol"). S01: token/done/error · S02: + node/interrupt.
+"Streaming protocol"). S01: token/done/error · S02: + node/interrupt ·
+S03: + citations · S04: + tool_call/tool_result · S06: + agent/handoff.
 """
 
 from dotenv import load_dotenv
@@ -24,6 +25,10 @@ app = FastAPI(title="AlphaDesk")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
+    # Vite increments the port when 5173 is already occupied. Keep local
+    # development working on that fallback port (and when opened via
+    # 127.0.0.1) without allowing non-local origins.
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):517\d+$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -55,9 +60,11 @@ async def stream_graph(graph_input, thread_id: str):
                 yield event(**chunk)
             elif mode == "messages":
                 token, meta = chunk
-                # Only the respond node's tokens are the answer; the router's
-                # structured-output call also streams here and must not leak.
-                if token.content and meta.get("langgraph_node") == "respond":
+                # Only answer-writing nodes stream to the user; the router,
+                # supervisor, and sub-agents also produce tokens here and
+                # must not leak. (First main.py change since Session 02 —
+                # Session 06 added `report` as a second answering node.)
+                if token.content and meta.get("langgraph_node") in ("respond", "report"):
                     yield event("token", text=token.content)
             elif mode == "updates" and "__interrupt__" in chunk:
                 yield event("interrupt", question=chunk["__interrupt__"][0].value["question"])
