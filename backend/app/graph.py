@@ -8,10 +8,11 @@ interrupt. (Old tutorials build agents with `langgraph.prebuilt
 the nodes and edges is the lesson.)
 """
 
+import json
 import os
 from typing import Annotated, Literal, Optional
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 # Old tutorials import MemorySaver — renamed InMemorySaver in 1.x, same class.
@@ -24,7 +25,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from .llm import SYSTEM_PROMPT  # the Session 01 prompt survives the rearchitecture
-from .tools import search_filings
+from .tools import MARKET_TOOLS, search_filings
 
 
 class DeskState(TypedDict):
@@ -164,8 +165,12 @@ NO_SOURCES_NOTE = (
 
 def respond(state: DeskState) -> dict:
     announce("respond")
-    # 'market' lands here un-augmented for now: the routing skeleton comes
-    # before the capability (live tools arrive in Session 04).
+    model = llm
+    if state["route"] == "market":
+        # bind_tools attaches the tools' JSON schemas to the request. The
+        # model can then *ask* for calls — executing them is our job (the
+        # tools node below). Function calling is a protocol, not magic.
+        model = llm.bind_tools(MARKET_TOOLS)
     system = SYSTEM_PROMPT
     if state["route"] == "filings":
         if state.get("sources"):
@@ -176,8 +181,27 @@ def respond(state: DeskState) -> dict:
             system = f"{SYSTEM_PROMPT}\n\n{GROUNDED_RULES}\n\nSOURCES:\n{numbered}"
         else:
             system = f"{SYSTEM_PROMPT}\n\n{NO_SOURCES_NOTE}"
-    reply = llm.invoke([("system", system), *state["messages"]])
+    reply = model.invoke([("system", system), *state["messages"]])
     return {"messages": [reply]}
+
+
+TOOL_REGISTRY = {t.name: t for t in MARKET_TOOLS}
+
+
+def tools(state: DeskState) -> dict:
+    # The other half of the function-calling protocol: run each call the
+    # model requested and hand back ToolMessages keyed by tool_call_id so it
+    # can match answers to requests. Hand-rolled (~10 lines) because seeing
+    # the loop is the lesson — langgraph.prebuilt.ToolNode does the same job.
+    announce("tools")
+    writer = get_stream_writer()
+    results = []
+    for call in state["messages"][-1].tool_calls:
+        writer({"type": "tool_call", "name": call["name"], "args": call["args"]})
+        payload = TOOL_REGISTRY[call["name"]].invoke(call["args"])
+        writer({"type": "tool_result", "name": call["name"], "payload": payload})
+        results.append(ToolMessage(content=json.dumps(payload), tool_call_id=call["id"]))
+    return {"messages": results}
 
 
 builder = StateGraph(DeskState)
@@ -185,6 +209,7 @@ builder.add_node("router", router)
 builder.add_node("clarify", clarify)
 builder.add_node("retrieve", retrieve)
 builder.add_node("respond", respond)
+builder.add_node("tools", tools)
 builder.add_edge(START, "router")
 builder.add_conditional_edges(
     "router",
@@ -192,13 +217,20 @@ builder.add_conditional_edges(
     {
         "general": "respond",
         "filings": "retrieve",  # Session 03: the retrieval path
-        "market": "respond",  # Session 04: the tool-enabled path
+        "market": "respond",  # Session 04: respond arrives tool-equipped
         "unclear": "clarify",
     },
 )
 builder.add_edge("clarify", "respond")
 builder.add_edge("retrieve", "respond")
-builder.add_edge("respond", END)
+# The tool loop: if respond's reply requests tool calls, execute them and go
+# around again (respond → tools → respond …) until it answers in plain text.
+builder.add_conditional_edges(
+    "respond",
+    lambda state: "tools" if state["messages"][-1].tool_calls else END,
+    {"tools": "tools", END: END},
+)
+builder.add_edge("tools", "respond")
 
 # In-process checkpoints: perfect for a classroom, gone on restart.
 # Session 07 swaps in a durable checkpointer without touching the graph.

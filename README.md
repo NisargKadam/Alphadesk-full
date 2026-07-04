@@ -25,7 +25,7 @@ cp .env.example .env       # then put your OpenAI API key in .env
 
 ```bash
 curl -N localhost:8000/api/chat -H 'Content-Type: application/json' \
-  -d '{"message":"What does the annual report say about AI risk?","thread_id":"t1"}'
+  -d '{"message":"What is Tesla trading at right now?","thread_id":"t1"}'
 ```
 
 ## Streaming protocol
@@ -50,6 +50,8 @@ renderer per type):
 | `node`      | S02   | `name`     | A graph node started — the pipeline, visible.    |
 | `interrupt` | S02   | `question` | The graph paused for a human answer (see below). |
 | `citations` | S03   | `items`    | The numbered evidence the answer cites as `[n]`: `[{id, source, page, snippet}]`. |
+| `tool_call` | S04   | `name`, `args` | The model requested a tool call — work in flight. |
+| `tool_result` | S04 | `name`, `payload` | The tool returned — live data (or its `error`). |
 
 Since Session 02 every request also carries a client-generated `thread_id` —
 the conversation state lives server-side in the graph checkpointer, keyed by
@@ -70,11 +72,36 @@ cd backend
 First run downloads Chroma's local embedding model (~80 MB, no API key).
 Re-runs are idempotent. The index lives in `backend/chroma_db/` (gitignored).
 
+## Use AlphaDesk's tools from Claude (Session 04)
+
+The same market tools the graph calls in-process are served over MCP by
+`backend/app/mcp_server.py`. Register them with Claude Code (adjust the path):
+
+```bash
+claude mcp add alphadesk -- /path/to/alphadesk/backend/.venv/bin/python /path/to/alphadesk/backend/app/mcp_server.py
+```
+
+or drop the equivalent into `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "alphadesk": {
+      "command": "/path/to/alphadesk/backend/.venv/bin/python",
+      "args": ["/path/to/alphadesk/backend/app/mcp_server.py"]
+    }
+  }
+}
+```
+
+Then ask Claude "use alphadesk to quote TSLA" — the exact functions your graph
+calls, consumed by an external agent.
+
 ## Session map
 
 1. **LLM & Agent Foundations** — streaming chat on a raw model call
 2. **LangChain & LangGraph** — StateGraph, thread state, HITL interrupt
-3. **Retrieval & RAG** — filings ingest, Chroma retrieval, cited answers *(you are here)*
-4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph
+3. **Retrieval & RAG** — filings ingest, Chroma retrieval, cited answers
+4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph *(you are here)*
 5. – 10. Roadmap: enterprise RAG, multi-agent, memory, guardrails, observability,
    deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).
