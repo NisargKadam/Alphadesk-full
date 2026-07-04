@@ -1,10 +1,14 @@
-"""Session 03: filings → chunks → Chroma.
+"""Filings → chunks → Chroma. Introduced in Session 03; parent-child layout in Session 05.
 
 Run from backend/:  python -m app.ingest ../data/filings
 
 This is the offline half of RAG. The online half (search_filings in
 tools.py + the retrieve node in graph.py) can only ever be as good as what
 happens here — retrieval quality is decided at ingest time.
+
+Session 05 layout: we index small CHILD chunks (precise to match against)
+that each point at their PARENT page (rich enough to answer from). Matching
+and reading have opposite size preferences — parent-child serves both.
 """
 
 import hashlib
@@ -16,15 +20,17 @@ from chromadb.config import Settings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
-# ~900 chars ≈ a paragraph or two: big enough to hold one complete thought,
-# small enough that a chunk stays on one topic. The 150-char overlap lets a
-# sentence that straddles a boundary survive in at least one chunk. These are
-# sane defaults, not truths — Session 05 compares strategies with numbers.
-CHUNK_SIZE = 900
-CHUNK_OVERLAP = 150
+# Children are deliberately small: ~300 chars is one tight claim, which keeps
+# embeddings on-topic and BM25 terms dense. The 60-char overlap lets a
+# sentence that straddles a boundary survive in at least one child. Parents
+# are whole pages — the model reads those. (Session 03 used one 900-char size
+# for both jobs; Session 05 splits the jobs.)
+CHILD_SIZE = 300
+CHILD_OVERLAP = 60
 
 CHROMA_PATH = "./chroma_db"
-COLLECTION = "filings"
+CHILDREN = "filings"          # queried (vector + BM25)
+PARENTS = "filings_parents"   # fetched by id, handed to the model
 
 
 def load_pages(path: Path) -> list[tuple[int, str]]:
@@ -43,26 +49,38 @@ def main(folder: str) -> None:
     # Chroma's default embedding function runs locally (an ONNX MiniLM model,
     # downloaded on first use) — no API key, no per-chunk cost. Alternatives
     # and their trade-offs are a Session 05 discussion.
-    collection = client.get_or_create_collection(COLLECTION)
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    children = client.get_or_create_collection(CHILDREN)
+    parents = client.get_or_create_collection(PARENTS)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=CHILD_SIZE, chunk_overlap=CHILD_OVERLAP)
 
-    ids, documents, metadatas = [], [], []
     for path in sorted(Path(folder).iterdir()):
-        if path.suffix not in {".pdf", ".txt"} or path.name == "README.md":
+        if path.suffix not in {".pdf", ".txt"}:
             continue
-        for page, text in load_pages(path):
-            for chunk in splitter.split_text(text):
-                # IDs derived from content make re-runs idempotent: an
-                # unchanged chunk upserts onto itself instead of duplicating.
-                ids.append(hashlib.sha1(f"{path.name}:{page}:{chunk}".encode()).hexdigest()[:16])
-                documents.append(chunk)
-                metadatas.append({"source": path.name, "page": page})
-        print(f"ingested {path.name}")
+        # Idempotency is per *document*: wipe this source's old chunks first,
+        # so re-ingesting an edited file (or a changed chunk layout) can never
+        # leave stale chunks behind, then insert fresh content-hashed ones.
+        children.delete(where={"source": path.name})
+        parents.delete(where={"source": path.name})
 
-    if not documents:
-        sys.exit(f"No .pdf or .txt filings found in {folder}")
-    collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-    print(f"{len(documents)} chunks → {CHROMA_PATH} (collection '{COLLECTION}', {collection.count()} total)")
+        c_ids, c_docs, c_metas = [], [], []
+        p_ids, p_docs, p_metas = [], [], []
+        for page, text in load_pages(path):
+            if not text.strip():
+                continue
+            parent_id = hashlib.sha1(f"{path.name}:{page}".encode()).hexdigest()[:16]
+            p_ids.append(parent_id)
+            p_docs.append(text)
+            p_metas.append({"source": path.name, "page": page})
+            for chunk in splitter.split_text(text):
+                c_ids.append(hashlib.sha1(f"{parent_id}:{chunk}".encode()).hexdigest()[:16])
+                c_docs.append(chunk)
+                c_metas.append({"source": path.name, "page": page, "parent_id": parent_id})
+
+        parents.upsert(ids=p_ids, documents=p_docs, metadatas=p_metas)
+        children.upsert(ids=c_ids, documents=c_docs, metadatas=c_metas)
+        print(f"ingested {path.name}: {len(p_ids)} pages → {len(c_ids)} child chunks")
+
+    print(f"index: {children.count()} children / {parents.count()} parents → {CHROMA_PATH}")
 
 
 if __name__ == "__main__":

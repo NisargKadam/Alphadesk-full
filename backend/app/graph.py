@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from .llm import SYSTEM_PROMPT  # the Session 01 prompt survives the rearchitecture
-from .tools import MARKET_TOOLS, search_filings
+from .tools import MARKET_TOOLS, rerank_filings, search_filings
 
 
 class DeskState(TypedDict):
@@ -54,6 +54,10 @@ class RouteDecision(BaseModel):
 
 llm = ChatOpenAI(model=os.environ["OPENAI_MODEL"])
 
+# Classification wants determinism, not creativity: the router runs at
+# temperature 0 so the same question takes the same path in every class.
+router_llm = ChatOpenAI(model=os.environ["OPENAI_MODEL"], temperature=0)
+
 ROUTER_PROMPT = (
     "You route requests arriving at an equity research desk. Classify the "
     "user's LATEST message given the conversation so far:\n"
@@ -65,8 +69,11 @@ ROUTER_PROMPT = (
     "- 'market': live prices, quotes, today's moves, recent news.\n"
     "- 'general': definitions, concepts, anything answerable without "
     "documents or live data.\n"
-    "- 'unclear': only when the message cannot be acted on at all without one "
-    "clarifying question (e.g. an ambiguous reference like 'the other one')."
+    "- 'unclear': only when the message needs one clarifying answer that ONLY "
+    "THE USER can give — an ambiguous back-reference like 'the other one'. An "
+    "unfamiliar company, product, or metric name is NOT unclear: route it to "
+    "'filings' and let retrieval check the documents. Never ask which company "
+    "something belongs to — the index answers that, or says it can't."
 )
 
 
@@ -79,7 +86,7 @@ def announce(name: str) -> None:
 
 def router(state: DeskState) -> dict:
     announce("router")
-    decision = llm.with_structured_output(RouteDecision).invoke(
+    decision = router_llm.with_structured_output(RouteDecision).invoke(
         [("system", ROUTER_PROMPT), *state["messages"]]
     )
     # sources=[] : last turn's evidence must not leak into this turn.
@@ -101,38 +108,18 @@ def clarify(state: DeskState) -> dict:
     return {"messages": [HumanMessage(content=answer)]}
 
 
-class Ranking(BaseModel):
-    """Structured output for the re-rank pass: an ordering, not prose."""
-
-    indices: list[int] = Field(
-        description="0-based positions of the most relevant chunks, best first, at most 4."
-    )
-
-
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
-
-
-def rerank(query: str, chunks: list[dict]) -> list[dict]:
-    # Listwise re-rank with one cheap structured model call: the retriever's
-    # top 10 (fast, approximate) get re-ordered down to the 4 the answer will
-    # actually cite. A trained cross-encoder does this job properly — that
-    # arrives in Session 05; the *shape* of the pipeline is what matters here.
-    numbered = "\n\n".join(f"[{i}] {c['text'][:400]}" for i, c in enumerate(chunks))
-    ranking = llm.with_structured_output(Ranking).invoke(
-        [
-            ("system", "Rank the excerpts by how well they answer the question."),
-            ("user", f"Question: {query}\n\nExcerpts:\n{numbered}"),
-        ]
-    )
-    kept = [chunks[i] for i in ranking.indices if 0 <= i < len(chunks)][:4]
-    return kept or chunks[:4]
 
 
 def retrieve(state: DeskState) -> dict:
     announce("retrieve")
     query = state["messages"][-1].content
+    # Session 05: retrieval is a funnel — hybrid search (BM25 + vectors,
+    # RRF-fused) finds 10 candidate pages, the cross-encoder orders them down
+    # to the 4 the answer will cite. Session 03's LLM re-rank sat behind this
+    # same flag; `python -m app.eval_retrieval` measures what each stage buys.
     hits = search_filings(query, k=10)
-    sources = rerank(query, hits) if RERANK_ENABLED and hits else hits[:4]
+    sources = rerank_filings(query, hits) if RERANK_ENABLED and hits else hits[:4]
     if sources:
         # The frontend numbers its citation chips from this event; respond()
         # below is instructed to cite with the same numbers. One vocabulary.
@@ -140,7 +127,16 @@ def retrieve(state: DeskState) -> dict:
             {
                 "type": "citations",
                 "items": [
-                    {"id": i + 1, "source": s["source"], "page": s["page"], "snippet": s["text"][:500]}
+                    {
+                        "id": i + 1,
+                        "source": s["source"],
+                        "page": s["page"],
+                        "snippet": s["snippet"][:500],
+                        # score is stage-relative (RRF sum vs. cross-encoder
+                        # logit) — comparable within a stage, never across.
+                        "score": s["score"],
+                        "stage": s["stage"],
+                    }
                     for i, s in enumerate(sources)
                 ],
             }

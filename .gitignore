@@ -5,3 +5,5 @@ node_modules/
 dist/
 chroma_db/
 .DS_Store
+# instructor-only material — never ships to students
+docs/INSTRUCTOR_PLAYBOOK.md

@@ -1,0 +1,12 @@
+[
+  {"question": "What was SampleCo's group revenue in fiscal 2025?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 1, "expected_substring": "$4.82 billion"},
+  {"question": "How many ProLine-9 controllers shipped in their first full year?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 1, "expected_substring": "118,000 units"},
+  {"question": "Which factories were consolidated to help margins recover?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 1, "expected_substring": "fabrication plants in Penang"},
+  {"question": "How sticky is the subscription customer base?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 1, "expected_substring": "net revenue retention was 113%"},
+  {"question": "What could commoditize the company's software offering?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 2, "expected_substring": "foundation-model-based tooling"},
+  {"question": "How much money is budgeted for EU AI Act conformity work?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 2, "expected_substring": "$18 million"},
+  {"question": "Is the company worried about keeping its machine-learning engineers?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 2, "expected_substring": "214 specialists"},
+  {"question": "Were there any security breaches this year?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 2, "expected_substring": "no material cybersecurity incidents"},
+  {"question": "What payout ratio range does the dividend policy target?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 3, "expected_substring": "between 40% and 50%"},
+  {"question": "What was the average share price paid for buybacks?", "expected_source": "sampleco_annual_report_SYNTHETIC.txt", "expected_page": 3, "expected_substring": "$38.20"}
+]

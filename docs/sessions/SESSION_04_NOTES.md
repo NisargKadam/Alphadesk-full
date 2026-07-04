@@ -6,7 +6,7 @@
 - Build the tool loop by hand: respond → tools → respond, until the model answers in plain text.
 - Write tools that fail gracefully — a typed error dict instead of an exception, so one bad ticker can't kill a graph run.
 - Serve the identical functions over MCP and watch an external agent (Claude) call them — one implementation, two protocols.
-- Extend the visible pipeline again: `tool_call` / `tool_result` land on the same custom stream channel as `node` and `citations`.
+- Extend the visible pipeline again: live ToolCallCards between the trail and the answer.
 
 ## Live-coding order
 
@@ -20,14 +20,20 @@
 8. `backend/app/graph.py` — the conditional loop: `respond → tools` while the last message has `tool_calls`, else `END`; `tools → respond` closes the circle.
 9. `backend/app/graph.py` — emit `tool_call` / `tool_result` on the custom stream channel, same as `node` and `citations`. `main.py`: still untouched since Session 02.
 10. Terminal — curl "What's Tesla trading at right now?"; read the event sequence out loud: router → respond → tool_call → tool_result → respond → tokens.
-11. `backend/app/mcp_server.py` — FastMCP; re-register the same functions (`.func` unwraps the LangChain shell); stdio transport.
-12. Terminal — `claude mcp add alphadesk -- <venv-python> <path>/app/mcp_server.py`, then in Claude: "use alphadesk to quote TSLA".
+11. `frontend/src/lib/stream.ts` — `tool_call`/`tool_result` events and the `ToolPayload` shape.
+12. `frontend/src/hooks/useChat.ts` — pair each `tool_result` with its oldest pending `tool_call`.
+13. `frontend/src/components/ToolCallCard.tsx` — the quote card: price count-up, day change colored *and* signed.
+14. `frontend/src/components/ToolCallCard.tsx` — the sparkline: one hand-rolled SVG polyline, no chart library — 12 lines.
+15. `frontend/src/components/MessageBubble.tsx` + `ChatWindow.tsx` + `App.tsx` — mount cards inside the trail; Session 04 suggestions and label.
+16. `backend/app/mcp_server.py` — FastMCP; re-register the same functions (`.func` unwraps the LangChain shell); stdio transport.
+17. Terminal — `claude mcp add alphadesk -- <venv-python> <path>/app/mcp_server.py`, then in Claude: "use alphadesk to quote TSLA".
+18. Browser — full demo script.
 
 ## Demo script
 
-1. **"What's Tesla trading at right now?"** — watch `tool_call` fire with the schema-shaped args, then `tool_result` carry live numbers. Read the path out loud: `router → respond → tools → respond` — the loop is visible on the wire.
-2. **"Compare Apple and Microsoft over the last month."** — the model chooses *two* `get_price_history` calls on its own; two result payloads, then a comparison in prose.
-3. **"Any recent news on Nvidia?"** — a headlines payload. Then switch to Claude and call the same tools over MCP — the desk's functions, consumed by an agent we didn't write.
+1. **"What's Tesla trading at right now?"** — a live tool card: pending → price counts up, day change signed and colored. Point at the trail: `router → respond → tools → respond` — the loop is visible.
+2. **"Compare Apple and Microsoft over the last month."** — the model chooses *two* `get_price_history` calls on its own; two cards, two sparklines, then a comparison in prose.
+3. **"Any recent news on Nvidia?"** — headlines card. Then switch to Claude and call the same tools over MCP — the desk's functions, consumed by an agent we didn't write.
 
 ## Where it breaks
 
@@ -38,8 +44,8 @@
 
 ## Stretch
 
-> **Budget note:** ~285 changed application lines against the ~250 target. `get_company_news` (~35 lines) is the self-contained cut if trimming live — teach it here instead.
+> **Budget note:** ~285 changed application lines against the ~250 target. `get_company_news` (+ its headlines rendering, ~35 lines) is the self-contained cut if trimming live — teach it here instead.
 
+- Add `get_quote`'s 52-week range to the card as a min/max whisker under the price.
+- Let the sparkline respond to hover with a crosshair + date/price tooltip.
 - Expose `search_filings` over MCP too, and ask Claude to answer a SampleCo question through your retrieval stack — RAG-as-a-service in one line.
-- Add `get_quote`'s 52-week range to the payload and let the model reason about where today's price sits in it.
-- Return a `stale: true` flag when yfinance serves cached data after hours; watch the model start hedging its phrasing — tools shape tone.

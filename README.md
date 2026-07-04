@@ -25,7 +25,7 @@ cp .env.example .env       # then put your OpenAI API key in .env
 
 ```bash
 curl -N localhost:8000/api/chat -H 'Content-Type: application/json' \
-  -d '{"message":"What is Tesla trading at right now?","thread_id":"t1"}'
+  -d '{"message":"How many ProLine-9 controllers did SampleCo ship this year?","thread_id":"t1"}'
 ```
 
 ## Streaming protocol
@@ -49,7 +49,7 @@ renderer per type):
 | `error`     | S01   | `message`  | Something failed; render it, stop.               |
 | `node`      | S02   | `name`     | A graph node started — the pipeline, visible.    |
 | `interrupt` | S02   | `question` | The graph paused for a human answer (see below). |
-| `citations` | S03   | `items`    | The numbered evidence the answer cites as `[n]`: `[{id, source, page, snippet}]`. |
+| `citations` | S03   | `items`    | The numbered evidence the answer cites as `[n]`: `[{id, source, page, snippet}]`. Since S05 each item also carries `score` and `stage` (`"vector" \| "hybrid" \| "reranked"`). |
 | `tool_call` | S04   | `name`, `args` | The model requested a tool call — work in flight. |
 | `tool_result` | S04 | `name`, `payload` | The tool returned — live data (or its `error`). |
 
@@ -71,6 +71,19 @@ cd backend
 
 First run downloads Chroma's local embedding model (~80 MB, no API key).
 Re-runs are idempotent. The index lives in `backend/chroma_db/` (gitignored).
+Since Session 05 the index is parent-child (small chunks matched, whole pages
+read) — re-run the ingest once after pulling Session 05.
+
+## Retrieval evaluation (Session 05)
+
+```bash
+cd backend
+.venv/bin/python -m app.eval_retrieval
+```
+
+Scores vector-only vs. hybrid (BM25 + RRF) vs. hybrid + cross-encoder
+re-rank on `data/eval/golden_questions.json` with hand-rolled hit@k and MRR.
+Measure first, then improve — add golden pairs for your own filings.
 
 ## Use AlphaDesk's tools from Claude (Session 04)
 
@@ -102,6 +115,7 @@ calls, consumed by an external agent.
 1. **LLM & Agent Foundations** — streaming chat on a raw model call
 2. **LangChain & LangGraph** — StateGraph, thread state, HITL interrupt
 3. **Retrieval & RAG** — filings ingest, Chroma retrieval, cited answers
-4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph *(you are here)*
-5. – 10. Roadmap: enterprise RAG, multi-agent, memory, guardrails, observability,
+4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph
+5. **Enterprise RAG at Scale** — hybrid retrieval, parent-child chunks, re-ranking, eval harness *(you are here)*
+6. – 10. Roadmap: multi-agent, memory, guardrails, observability,
    deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).

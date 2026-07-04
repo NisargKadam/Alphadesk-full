@@ -23,12 +23,12 @@ time is spent on frontend code.
    cited answers. Session 01's hallucination demo gets fixed on camera.
 4. **Tool Use, Function Calling & MCP** — live market data (quotes, price history,
    news) via function calling inside the graph, and the same tools exposed over MCP
-   to external agents. *← implemented through here*
-5. **Enterprise RAG at Scale** *(ROADMAP)* — the Session 03 pipeline, done properly:
-   a chunking-strategy comparison with measurements instead of folklore, hybrid
-   (dense + keyword) search, cross-encoder re-ranking replacing the lightweight
-   model-call re-rank, and a retrieval evaluation harness so changes are judged by
-   numbers, not vibes.
+   to external agents.
+5. **Enterprise RAG at Scale** — the Session 03 pipeline, done properly: an eval
+   harness (hand-rolled hit@k and MRR) so changes are judged by numbers, hybrid
+   (BM25 + vector, RRF-fused) search, parent-child chunking, and cross-encoder
+   re-ranking replacing the lightweight model-call re-rank.
+   *← implemented through here*
 6. **Multi-Agent Systems** *(ROADMAP)* — the single graph becomes a supervisor
    coordinating Market, Filings Analyst, News, and Report Writer sub-agents with
    clean hand-offs. The event stream already carries arbitrary node paths, so the
