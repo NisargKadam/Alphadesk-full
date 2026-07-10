@@ -1,5 +1,7 @@
 """The LangGraph StateGraph behind AlphaDesk. Introduced in Session 02;
-Session 06 turns the single agent into a team.
+Session 06 turns the single agent into a team; Session 07 gives it memory
+that survives both restarts (durable checkpoints) and thread boundaries
+(the long-term store in memory.py).
 
 Same product, real architecture — typed state, checkpointed threads, one
 honest human-in-the-loop interrupt, and (since Session 06) a supervisor
@@ -13,11 +15,16 @@ import json
 import os
 from typing import Annotated, Literal, Optional
 
-from langchain_core.messages import HumanMessage, ToolMessage
+import aiosqlite
+from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-# Old tutorials import MemorySaver — renamed InMemorySaver in 1.x, same class.
-from langgraph.checkpoint.memory import InMemorySaver
+# Session 07: InMemorySaver retired — a durable checkpointer writes every
+# checkpoint to disk, so a thread survives a server restart. The ASYNC
+# variant, because main.py streams with `graph.astream`: the sync SqliteSaver
+# raises the moment an async graph run touches it (a classic first-attempt
+# failure — demo it, then fix it live).
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -25,6 +32,7 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
+from . import memory as memory_store  # Session 07: the long-term store
 from .llm import SYSTEM_PROMPT  # the Session 01 prompt survives every rearchitecture
 from .tools import (
     get_company_news,
@@ -46,6 +54,11 @@ class DeskState(TypedDict):
     # across turns in the checkpoint, so the router clears them every turn.
     tasks: list
     results: list
+    # Session 07: who is asking (crosses threads via the store), what the
+    # desk knows about them, and the folded-down past of a long conversation.
+    user_id: str
+    profile: dict
+    summary: str
 
 
 # --- Session 06: the hand-off contracts -------------------------------------
@@ -105,7 +118,9 @@ ROUTER_PROMPT = (
     "desk supervisor decides which specialists run; an unfamiliar company or "
     "product name is NOT a reason to ask the user.\n"
     "- 'general': definitions, concepts, anything answerable without "
-    "documents or live data.\n"
+    "documents or live data — including questions about the user themselves "
+    "(their watchlist, their preferences), which the profile in your context "
+    "answers.\n"
     "- 'unclear': only when the message needs one clarifying answer that ONLY "
     "THE USER can give — an ambiguous back-reference like 'the other one'."
 )
@@ -133,10 +148,61 @@ def announce(name: str) -> None:
     get_stream_writer()({"type": "node", "name": name})
 
 
+SUMMARIZE_PROMPT = (
+    "Fold the running summary (if any) and the earlier conversation turns "
+    "below into ONE compact briefing note a colleague could pick the thread "
+    "up from: who the user is, what they asked, what the desk reported — "
+    "tickers, figures, and stated preferences kept exact. No preamble."
+)
+
+
+def memory(state: DeskState) -> dict:
+    announce("memory")
+    writer = get_stream_writer()
+    user_id = state.get("user_id") or "default"
+    latest = state["messages"][-1].content
+    # Write path: one cheap structured call. Empty almost every turn — the
+    # desk that memorizes your every sentence is a bug, not a feature.
+    saved = memory_store.extract_and_store(router_llm, user_id, latest)
+    if saved:
+        writer({"type": "memory", "action": "saved", "items": saved})
+    # Read path: the profile crosses THREADS, not just turns — a new
+    # thread_id starts blank in the checkpointer but not in the store.
+    profile = memory_store.recall(user_id)
+    if profile:
+        writer({"type": "memory", "action": "recalled", "items": profile})
+    updates: dict = {"user_id": user_id, "profile": profile}
+    # Summarize, don't truncate: past the threshold the oldest turns are
+    # folded into prose and REMOVED from state. The checkpointer keeps
+    # history; the model's context window carries a briefing note instead.
+    if len(state["messages"]) > 12:
+        old, recent = state["messages"][:-4], state["messages"][-4:]
+        transcript = "\n".join(f"{m.type}: {m.content}" for m in old if m.content)
+        digest = llm.invoke(
+            [("system", SUMMARIZE_PROMPT),
+             ("user", f"Running summary: {state.get('summary') or '(none)'}\n\nEarlier turns:\n{transcript}")]
+        ).content
+        updates["summary"] = digest
+        updates["messages"] = [RemoveMessage(id=m.id) for m in old]
+    return updates
+
+
+def _context_prefix(state: DeskState) -> str:
+    # What the answering nodes get to know beyond the visible messages.
+    parts = []
+    if state.get("profile"):
+        parts.append("User profile (long-term memory): " + json.dumps(state["profile"]))
+    if state.get("summary"):
+        parts.append("Conversation so far (summarized): " + state["summary"])
+    return ("\n" + "\n".join(parts)) if parts else ""
+
+
 def router(state: DeskState) -> dict:
     announce("router")
+    # Session 07: triage sees the profile too — "what's on my watchlist?"
+    # is only classifiable as 'general' if the router knows a watchlist exists.
     decision = router_llm.with_structured_output(RouteDecision).invoke(
-        [("system", ROUTER_PROMPT), *state["messages"]]
+        [("system", ROUTER_PROMPT + _context_prefix(state)), *state["messages"]]
     )
     # tasks/results reset: last turn's plan must not leak into this turn.
     return {
@@ -283,7 +349,7 @@ def report(state: DeskState) -> dict:
         get_stream_writer()({"type": "citations", "items": evidence})
     reply = llm.invoke(
         [
-            ("system", REPORT_PROMPT),
+            ("system", REPORT_PROMPT + _context_prefix(state)),
             *state["messages"],
             ("user", "Specialist results:\n" + json.dumps(state["results"], indent=1)),
         ]
@@ -296,18 +362,24 @@ def respond(state: DeskState) -> dict:
     # The general-conversation path: no tools, no retrieval — those belong to
     # the specialists now. Sessions 03–05 grew this node; Session 06 slimmed
     # it back down, which is its own lesson in where capabilities live.
-    reply = llm.invoke([("system", SYSTEM_PROMPT), *state["messages"]])
+    # Session 07: the profile and summary ride in as system context — memory
+    # changes what the model KNOWS, never what the user SAID.
+    reply = llm.invoke([("system", SYSTEM_PROMPT + _context_prefix(state)), *state["messages"]])
     return {"messages": [reply]}
 
 
 builder = StateGraph(DeskState)
+builder.add_node("memory", memory)
 builder.add_node("router", router)
 builder.add_node("clarify", clarify)
 builder.add_node("supervisor", supervisor)
 builder.add_node("agents", agents)
 builder.add_node("report", report)
 builder.add_node("respond", respond)
-builder.add_edge(START, "router")
+# Memory runs before triage: what the desk recalls can change how the
+# router reads the message ("add it to my list" is only routable with one).
+builder.add_edge(START, "memory")
+builder.add_edge("memory", "router")
 builder.add_conditional_edges(
     "router",
     lambda state: state["route"],
@@ -318,13 +390,25 @@ builder.add_conditional_edges(
     },
 )
 # A clarified message goes back through triage — the user's answer may have
-# turned "the other one?" into a market question.
+# turned "the other one?" into a market question. (Back to router, not
+# memory: a clarification answer is context, not a fact worth storing.)
 builder.add_edge("clarify", "router")
 builder.add_edge("supervisor", "agents")
 builder.add_edge("agents", "report")
 builder.add_edge("report", END)
 builder.add_edge("respond", END)
 
-# In-process checkpoints: perfect for a classroom, gone on restart.
-# Session 07 swaps in a durable checkpointer without touching the graph.
-graph = builder.compile(checkpointer=InMemorySaver())
+# Session 07 keeps the Session 02 promise: the durable checkpointer arrives
+# and the graph above doesn't change. Kill uvicorn mid-conversation, boot it
+# again, send the same thread_id — the thread resumes from desk_state.db.
+
+
+def compile_graph():
+    """Compiled at app STARTUP, not at import — AsyncSqliteSaver binds to the
+    running event loop the moment it is constructed, and at import time there
+    isn't one. main.py's lifespan calls this; async resources are born where
+    the loop lives. (The sync SqliteSaver compiles fine at import but raises
+    on the first `astream` — try it, read the error, then land here.)"""
+    return builder.compile(
+        checkpointer=AsyncSqliteSaver(aiosqlite.connect(memory_store.DB_PATH))
+    )

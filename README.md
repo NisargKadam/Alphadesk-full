@@ -54,12 +54,24 @@ renderer per type):
 | `tool_result` | S04 | `name`, `payload` | The tool returned — live data (or its `error`). Since S06 carries `agent`. |
 | `handoff`   | S06   | `from`, `to`, `task` | The supervisor delegated a task to a specialist. |
 | `agent`     | S06   | `name`, `status` | A specialist started (`running`) or finished (`done`). |
+| `memory`    | S07   | `action`, `items` | Long-term memory was `saved` (new facts) or `recalled` (the user's profile). |
 
 Since Session 02 every request also carries a client-generated `thread_id` —
 the conversation state lives server-side in the graph checkpointer, keyed by
 that id. When an `interrupt` event arrives, the graph is paused;
 `POST /api/chat/resume` with `{"thread_id": "...", "answer": "..."}` resumes
 it and returns a fresh SSE stream that continues the same reply.
+
+Since Session 07 a request may also carry a `user_id` (default `"default"`) —
+it names the *person*, not the conversation: long-term memory (watchlist,
+preferences) is keyed by it and crosses every thread that user opens.
+
+## Durable state (Session 07)
+
+Threads and long-term memory both live in `backend/desk_state.db`
+(gitignored): checkpoints from the SQLite checkpointer, the user profile
+store beside them. Kill the server and resume any thread; delete the file to
+reset the desk completely.
 
 ## Filings ingest (Session 03)
 
@@ -119,6 +131,7 @@ calls, consumed by an external agent.
 3. **Retrieval & RAG** — filings ingest, Chroma retrieval, cited answers
 4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph
 5. **Enterprise RAG at Scale** — hybrid retrieval, parent-child chunks, re-ranking, eval harness
-6. **Multi-Agent Systems** — supervisor, typed hand-offs, specialist sub-agents *(you are here)*
-7. – 10. Roadmap: memory, guardrails, observability,
+6. **Multi-Agent Systems** — supervisor, typed hand-offs, specialist sub-agents
+7. **Memory & State** — durable checkpoints, long-term store, summarization *(you are here)*
+8. – 10. Roadmap: guardrails, observability,
    deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).

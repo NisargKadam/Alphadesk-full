@@ -33,11 +33,12 @@ time is spent on frontend code.
    hand-offs as typed contracts (`Task` out, `AgentResult` back) so evidence
    survives the trip. Every delegation is announced on the wire: one `handoff`
    event per task, `agent` status events as each specialist runs.
+7. **Memory & State** — the in-process checkpointer becomes a durable SQLite
+   checkpointer (threads survive restarts; the graph compiles in the app's
+   lifespan because async savers are born inside the loop), a hand-rolled
+   long-term store carries the user's watchlist and preferences across
+   threads, and long conversations get summarized instead of truncated.
    *← implemented through here*
-7. **Memory & State** *(ROADMAP)* — the in-process `MemorySaver` checkpointer
-   becomes durable storage, a long-term store holds the user's watchlist and
-   preferences across threads, and long conversations get summarized instead of
-   truncated.
 8. **Guardrails & Safety** *(ROADMAP)* — input validation, policy rails that keep
    the desk on the right side of "not investment advice", structured-output checks,
    and a tour of realistic failure modes and how each layer catches them.

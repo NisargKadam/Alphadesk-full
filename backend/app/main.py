@@ -2,12 +2,15 @@
 
 The SSE event vocabulary grows one session at a time (see README,
 "Streaming protocol"). S01: token/done/error · S02: + node/interrupt ·
-S03: + citations · S04: + tool_call/tool_result · S06: + agent/handoff.
+S03: + citations · S04: + tool_call/tool_result · S06: + agent/handoff ·
+S07: + memory.
 """
 
 from dotenv import load_dotenv
 
 load_dotenv()  # backend/.env — secrets stay out of code and out of git
+
+from contextlib import asynccontextmanager  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
@@ -15,10 +18,23 @@ from fastapi.responses import StreamingResponse  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from .graph import graph  # noqa: E402  (imported after the env is loaded)
+from .graph import compile_graph  # noqa: E402  (imported after the env is loaded)
 from .sse import event  # noqa: E402
 
-app = FastAPI(title="AlphaDesk")
+graph = None  # compiled in the lifespan below — see compile_graph()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Session 07: the durable (async) checkpointer must be created inside
+    # the running event loop, so the graph is compiled at startup rather
+    # than at import. Second change to this file since Session 02.
+    global graph
+    graph = compile_graph()
+    yield
+
+
+app = FastAPI(title="AlphaDesk", lifespan=lifespan)
 
 # The Vite dev server is a different origin, so the browser preflights our
 # POST; without these headers the stream never starts.
@@ -37,6 +53,9 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     thread_id: str  # client-generated; names this conversation's checkpoint
+    # Session 07: names the PERSON, not the conversation — long-term memory
+    # is keyed by this and crosses every thread the user opens.
+    user_id: str = "default"
 
 
 class ResumeRequest(BaseModel):
@@ -77,7 +96,10 @@ async def stream_graph(graph_input, thread_id: str):
 @app.post("/api/chat")
 def chat(req: ChatRequest) -> StreamingResponse:
     return StreamingResponse(
-        stream_graph({"messages": [("user", req.message)]}, req.thread_id),
+        stream_graph(
+            {"messages": [("user", req.message)], "user_id": req.user_id},
+            req.thread_id,
+        ),
         media_type="text/event-stream",
     )
 
