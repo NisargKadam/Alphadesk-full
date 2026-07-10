@@ -38,10 +38,12 @@ time is spent on frontend code.
    lifespan because async savers are born inside the loop), a hand-rolled
    long-term store carries the user's watchlist and preferences across
    threads, and long conversations get summarized instead of truncated.
-   *← implemented through here*
-8. **Guardrails & Safety** *(ROADMAP)* — input validation, policy rails that keep
-   the desk on the right side of "not investment advice", structured-output checks,
-   and a tour of realistic failure modes and how each layer catches them.
+8. **Guardrails & Safety** — the desk's policies become code: an input rail
+   that blocks before any model call, a policy rail that reframes advice
+   asks educationally (with the disclaimer appended by code, not hoped for
+   in a prompt), schema retries at the model boundary, and a tour of the
+   failure modes each layer catches. NeMo Guardrails named as the
+   production stack. *← implemented through here*
 9. **Observability & LLMOps** *(ROADMAP)* — tracing across the graph, per-run
    token/cost accounting emitted on the stream (the pipeline grows a price tag),
    and evaluation runs wired into the workflow.

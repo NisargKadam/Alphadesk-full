@@ -1,7 +1,8 @@
 """The LangGraph StateGraph behind AlphaDesk. Introduced in Session 02;
 Session 06 turns the single agent into a team; Session 07 gives it memory
 that survives both restarts (durable checkpoints) and thread boundaries
-(the long-term store in memory.py).
+(the long-term store in memory.py); Session 08 puts rails around it
+(guardrails.py — input screening, policy reframing, schema retries).
 
 Same product, real architecture — typed state, checkpointed threads, one
 honest human-in-the-loop interrupt, and (since Session 06) a supervisor
@@ -16,7 +17,7 @@ import os
 from typing import Annotated, Literal, Optional
 
 import aiosqlite
-from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 # Session 07: InMemorySaver retired — a durable checkpointer writes every
@@ -33,6 +34,13 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from . import memory as memory_store  # Session 07: the long-term store
+from .guardrails import (  # Session 08: policy as code
+    POLICY_RULES,
+    disclaimer_suffix,
+    screen_input,
+    try_structured,
+    wants_personal_advice,
+)
 from .llm import SYSTEM_PROMPT  # the Session 01 prompt survives every rearchitecture
 from .tools import (
     get_company_news,
@@ -59,6 +67,9 @@ class DeskState(TypedDict):
     user_id: str
     profile: dict
     summary: str
+    # Session 08: the policy rail's flag — this turn asked for personalized
+    # advice, so the answering node reframes instead of recommending.
+    reframe: bool
 
 
 # --- Session 06: the hand-off contracts -------------------------------------
@@ -197,13 +208,40 @@ def _context_prefix(state: DeskState) -> str:
     return ("\n" + "\n".join(parts)) if parts else ""
 
 
+def guard(state: DeskState) -> dict:
+    announce("guard")
+    writer = get_stream_writer()
+    latest = state["messages"][-1].content
+    # Input rail first: deterministic, token-free, and BEFORE the router —
+    # a blocked message should never reach a model at all.
+    verdict = screen_input(latest)
+    if verdict.action == "block":
+        writer({"type": "guardrail", "rail": verdict.rail, "action": "blocked"})
+        refusal = f"That request tripped the desk's input rails ({verdict.reason}) Rephrase it and try again."
+        # A hardcoded refusal never passes through an LLM, so it would never
+        # stream — emit it as a token event ourselves, keep it in history.
+        writer({"type": "token", "text": refusal})
+        return {"route": "blocked", "messages": [AIMessage(content=refusal)], "reframe": False}
+    # Policy rail second: advice asks aren't blocked, they're REFRAMED —
+    # the answering nodes get POLICY_RULES, the user gets an education.
+    reframe = wants_personal_advice(latest)
+    if reframe:
+        writer({"type": "guardrail", "rail": "advice", "action": "reframed"})
+    return {"route": "", "reframe": reframe}
+
+
 def router(state: DeskState) -> dict:
     announce("router")
     # Session 07: triage sees the profile too — "what's on my watchlist?"
     # is only classifiable as 'general' if the router knows a watchlist exists.
-    decision = router_llm.with_structured_output(RouteDecision).invoke(
-        [("system", ROUTER_PROMPT + _context_prefix(state)), *state["messages"]]
+    # Session 08: through the schema rail — a malformed decision retries once,
+    # visibly, instead of crashing the turn.
+    decision, retries = try_structured(
+        router_llm, RouteDecision,
+        [("system", ROUTER_PROMPT + _context_prefix(state)), *state["messages"]],
     )
+    if retries:
+        get_stream_writer()({"type": "guardrail", "rail": "schema", "action": "retried"})
     # tasks/results reset: last turn's plan must not leak into this turn.
     return {
         "route": decision.route,
@@ -226,9 +264,11 @@ def clarify(state: DeskState) -> dict:
 
 def supervisor(state: DeskState) -> dict:
     announce("supervisor")
-    plan = router_llm.with_structured_output(Plan).invoke(
-        [("system", SUPERVISOR_PROMPT), *state["messages"]]
+    plan, retries = try_structured(
+        router_llm, Plan, [("system", SUPERVISOR_PROMPT), *state["messages"]]
     )
+    if retries:
+        get_stream_writer()({"type": "guardrail", "rail": "schema", "action": "retried"})
     # Contract enforcement, not just prompt hope: one lane per specialist.
     # Two filings tasks would produce two evidence sets both numbered [1..n]
     # — colliding citations downstream. The schema allows it; we don't.
@@ -347,13 +387,20 @@ def report(state: DeskState) -> dict:
     evidence = [e for r in state["results"] if r["agent"] == "filings" for e in r["evidence"]]
     if evidence:
         get_stream_writer()({"type": "citations", "items": evidence})
+    rules = POLICY_RULES if state.get("reframe") else ""
     reply = llm.invoke(
         [
-            ("system", REPORT_PROMPT + _context_prefix(state)),
+            ("system", REPORT_PROMPT + rules + _context_prefix(state)),
             *state["messages"],
             ("user", "Specialist results:\n" + json.dumps(state["results"], indent=1)),
         ]
     )
+    # The disclaimer is appended by CODE on every desk answer — and emitted
+    # as one last token event, since it never came out of the model's stream.
+    suffix = disclaimer_suffix(reply.content)
+    if suffix:
+        get_stream_writer()({"type": "token", "text": suffix})
+        reply.content += suffix
     return {"messages": [reply]}
 
 
@@ -364,12 +411,21 @@ def respond(state: DeskState) -> dict:
     # it back down, which is its own lesson in where capabilities live.
     # Session 07: the profile and summary ride in as system context — memory
     # changes what the model KNOWS, never what the user SAID.
-    reply = llm.invoke([("system", SYSTEM_PROMPT + _context_prefix(state)), *state["messages"]])
+    # Session 08: an advice ask reframes (POLICY_RULES) and the reframed
+    # answer carries the disclaimer, appended by code.
+    rules = POLICY_RULES if state.get("reframe") else ""
+    reply = llm.invoke([("system", SYSTEM_PROMPT + rules + _context_prefix(state)), *state["messages"]])
+    if state.get("reframe"):
+        suffix = disclaimer_suffix(reply.content)
+        if suffix:
+            get_stream_writer()({"type": "token", "text": suffix})
+            reply.content += suffix
     return {"messages": [reply]}
 
 
 builder = StateGraph(DeskState)
 builder.add_node("memory", memory)
+builder.add_node("guard", guard)
 builder.add_node("router", router)
 builder.add_node("clarify", clarify)
 builder.add_node("supervisor", supervisor)
@@ -378,8 +434,15 @@ builder.add_node("report", report)
 builder.add_node("respond", respond)
 # Memory runs before triage: what the desk recalls can change how the
 # router reads the message ("add it to my list" is only routable with one).
+# The guard sits between them: recall is safe on any input, but nothing
+# blocked gets to spend router/supervisor tokens.
 builder.add_edge(START, "memory")
-builder.add_edge("memory", "router")
+builder.add_edge("memory", "guard")
+builder.add_conditional_edges(
+    "guard",
+    lambda state: state["route"],
+    {"blocked": END, "": "router"},
+)
 builder.add_conditional_edges(
     "router",
     lambda state: state["route"],

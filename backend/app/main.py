@@ -3,7 +3,7 @@
 The SSE event vocabulary grows one session at a time (see README,
 "Streaming protocol"). S01: token/done/error · S02: + node/interrupt ·
 S03: + citations · S04: + tool_call/tool_result · S06: + agent/handoff ·
-S07: + memory.
+S07: + memory · S08: + guardrail.
 """
 
 from dotenv import load_dotenv

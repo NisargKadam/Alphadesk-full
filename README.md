@@ -55,6 +55,7 @@ renderer per type):
 | `handoff`   | S06   | `from`, `to`, `task` | The supervisor delegated a task to a specialist. |
 | `agent`     | S06   | `name`, `status` | A specialist started (`running`) or finished (`done`). |
 | `memory`    | S07   | `action`, `items` | Long-term memory was `saved` (new facts) or `recalled` (the user's profile). |
+| `guardrail` | S08   | `rail`, `action` | A rail fired: `input/blocked`, `advice/reframed`, or `schema/retried`. |
 
 Since Session 02 every request also carries a client-generated `thread_id` —
 the conversation state lives server-side in the graph checkpointer, keyed by
@@ -132,6 +133,7 @@ calls, consumed by an external agent.
 4. **Tool Use, Function Calling & MCP** — live market tools, inside and outside the graph
 5. **Enterprise RAG at Scale** — hybrid retrieval, parent-child chunks, re-ranking, eval harness
 6. **Multi-Agent Systems** — supervisor, typed hand-offs, specialist sub-agents
-7. **Memory & State** — durable checkpoints, long-term store, summarization *(you are here)*
-8. – 10. Roadmap: guardrails, observability,
+7. **Memory & State** — durable checkpoints, long-term store, summarization
+8. **Guardrails & Safety** — input rails, policy rails, structured-output checks *(you are here)*
+9. – 10. Roadmap: observability,
    deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).
