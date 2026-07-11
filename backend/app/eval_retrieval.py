@@ -10,10 +10,15 @@ ideas, plus answer-quality metrics that need an LLM judge.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .tools import rerank_filings, search_filings
+
+load_dotenv()  # Session 09: the CLI honors backend/.env (OPIK_* flags)
 
 K = 4  # the graph cites 4 sources, so hit@4 answers "would the answer have seen it?"
 
@@ -66,6 +71,51 @@ CONFIGS = {
 }
 
 
+def log_to_opik(golden: list[dict]) -> None:
+    """Session 09: the same numbers, but with a history. Each run becomes an
+    Opik experiment over a dataset built from the golden questions — tune
+    chunking next month and the dashboard shows whether MRR actually moved.
+
+    Additive and failure-safe by design: OPIK_TRACING=false, a missing SDK,
+    or an unreachable server all leave the Session 05 CLI output untouched.
+    """
+    if os.getenv("OPIK_TRACING", "false").lower() != "true":
+        return
+    try:
+        import opik
+        from opik.evaluation import evaluate
+        from opik.evaluation.metrics import base_metric, score_result
+
+        class RankScore(base_metric.BaseMetric):
+            """Scores one retrieval from the rank the task computed."""
+
+            def __init__(self, name: str, fn):
+                super().__init__(name)
+                self._fn = fn
+
+            def score(self, rank=None, **_):
+                return score_result.ScoreResult(name=self.name, value=self._fn(rank))
+
+        metrics = [
+            RankScore("hit@1", lambda r: float(r == 1)),
+            RankScore(f"hit@{K}", lambda r: float(bool(r and r <= K))),
+            RankScore("reciprocal_rank", lambda r: 1 / r if r else 0.0),
+        ]
+        dataset = opik.Opik().get_or_create_dataset(name="alphadesk-golden")
+        dataset.insert(golden)  # Opik dedupes identical rows — re-runs are safe
+        for name, retrieve in CONFIGS.items():
+            evaluate(
+                experiment_name=f"retrieval: {name}",
+                dataset=dataset,
+                task=lambda item, r=retrieve: {"rank": rank_of_expected(r(item["question"]), item)},
+                scoring_metrics=metrics,
+                project_name=os.getenv("OPIK_PROJECT_NAME", "alphadesk"),
+            )
+        print("\nLogged to Opik: dataset 'alphadesk-golden', one experiment per configuration.")
+    except Exception as exc:  # observability must never fail the eval itself
+        print(f"\n(Opik logging skipped: {exc})")
+
+
 def main() -> None:
     path = Path(sys.argv[1] if len(sys.argv) > 1 else "../data/eval/golden_questions.json")
     golden = json.loads(path.read_text())
@@ -75,6 +125,7 @@ def main() -> None:
     for name, retrieve in CONFIGS.items():
         h1, hk, mrr = evaluate(golden, retrieve)
         print(f"{name:<20} {h1:>6.2f} {hk:>6.2f} {mrr:>6.3f}")
+    log_to_opik(golden)
     print("\nRe-run with RERANK_ENABLED=false in .env to feel the difference in the app itself.")
 
 

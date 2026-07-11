@@ -24,3 +24,6 @@ sentence-transformers==5.6.0
 # Session 07 — Memory & State
 langgraph-checkpoint-sqlite==3.1.0
 aiosqlite==0.22.1
+
+# Session 09 — Observability & LLMOps
+opik==2.1.22

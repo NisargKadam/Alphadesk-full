@@ -56,6 +56,7 @@ renderer per type):
 | `agent`     | S06   | `name`, `status` | A specialist started (`running`) or finished (`done`). |
 | `memory`    | S07   | `action`, `items` | Long-term memory was `saved` (new facts) or `recalled` (the user's profile). |
 | `guardrail` | S08   | `rail`, `action` | A rail fired: `input/blocked`, `advice/reframed`, or `schema/retried`. |
+| `cost`      | S09   | `input_tokens`, `output_tokens`, `usd`, `by_model` | The run's price tag, just before `done`. `usd` is null if a model is missing from the price table. |
 
 Since Session 02 every request also carries a client-generated `thread_id` —
 the conversation state lives server-side in the graph checkpointer, keyed by
@@ -100,6 +101,22 @@ Scores vector-only vs. hybrid (BM25 + RRF) vs. hybrid + cross-encoder
 re-rank on `data/eval/golden_questions.json` with hand-rolled hit@k and MRR.
 Measure first, then improve — add golden pairs for your own filings.
 
+## Observability (Session 09)
+
+Cost needs no server at all: every `/api/chat` stream now ends with a `cost`
+event — the run's token totals and a USD estimate — just before `done`.
+
+Set `OPIK_TRACING=true` in `backend/.env` to also ship every run as a full
+trace tree (router → supervisor → specialists → report, with prompts,
+latencies, and token counts) to a locally hosted
+[Opik](https://github.com/comet-ml/opik) instance — the SDK reads
+`~/.opik.config` for the server URL. Tracing off or server down: nothing
+changes; observability is strictly additive.
+
+With Opik on, `python -m app.eval_retrieval` also logs each run as an
+experiment over the `alphadesk-golden` dataset — retrieval changes get a
+tracked history instead of terminal numbers that scroll away.
+
 ## Use AlphaDesk's tools from Claude (Session 04)
 
 The same market tools the graph calls in-process are served over MCP by
@@ -134,6 +151,6 @@ calls, consumed by an external agent.
 5. **Enterprise RAG at Scale** — hybrid retrieval, parent-child chunks, re-ranking, eval harness
 6. **Multi-Agent Systems** — supervisor, typed hand-offs, specialist sub-agents
 7. **Memory & State** — durable checkpoints, long-term store, summarization
-8. **Guardrails & Safety** — input rails, policy rails, structured-output checks *(you are here)*
-9. – 10. Roadmap: observability,
-   deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).
+8. **Guardrails & Safety** — input rails, policy rails, structured-output checks
+9. **Observability & LLMOps** — Opik traces, per-run cost on the stream, eval experiments *(you are here)*
+10. Roadmap: deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).

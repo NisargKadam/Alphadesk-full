@@ -3,7 +3,7 @@
 The SSE event vocabulary grows one session at a time (see README,
 "Streaming protocol"). S01: token/done/error · S02: + node/interrupt ·
 S03: + citations · S04: + tool_call/tool_result · S06: + agent/handoff ·
-S07: + memory · S08: + guardrail.
+S07: + memory · S08: + guardrail · S09: + cost.
 """
 
 from dotenv import load_dotenv
@@ -18,7 +18,10 @@ from fastapi.responses import StreamingResponse  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
+from langchain_core.callbacks import UsageMetadataCallbackHandler  # noqa: E402
+
 from .graph import compile_graph  # noqa: E402  (imported after the env is loaded)
+from .observability import cost_payload, make_tracer  # noqa: E402
 from .sse import event  # noqa: E402
 
 graph = None  # compiled in the lifespan below — see compile_graph()
@@ -66,7 +69,15 @@ class ResumeRequest(BaseModel):
 async def stream_graph(graph_input, thread_id: str):
     # thread_id selects which checkpointed conversation this run extends —
     # state lives server-side in the checkpointer, not in the request.
-    config = {"configurable": {"thread_id": thread_id}}
+    # Session 09: each run carries its own token meter, and (when
+    # OPIK_TRACING is on) a tracer shipping the run to local Opik. Both are
+    # callbacks — the graph itself doesn't know it's being observed.
+    usage = UsageMetadataCallbackHandler()
+    callbacks: list = [usage]
+    tracer = make_tracer()
+    if tracer is not None:
+        callbacks.append(tracer)
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": callbacks}
     try:
         # LangGraph's current streaming API: astream with multiple modes.
         #   "messages" → per-token chunks from LLM calls inside nodes
@@ -87,6 +98,10 @@ async def stream_graph(graph_input, thread_id: str):
                     yield event("token", text=token.content)
             elif mode == "updates" and "__interrupt__" in chunk:
                 yield event("interrupt", question=chunk["__interrupt__"][0].value["question"])
+        # The price tag: one cost event per run, just before done. Absent
+        # only when the run made no model calls at all.
+        if usage.usage_metadata:
+            yield event("cost", **cost_payload(usage.usage_metadata))
         yield event("done")
     except Exception as exc:
         # A failure mid-stream must be an event, not a dead socket.

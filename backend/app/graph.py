@@ -114,12 +114,15 @@ class RouteDecision(BaseModel):
     )
 
 
-llm = ChatOpenAI(model=os.environ["OPENAI_MODEL"])
+# Session 09: streamed calls only report token usage when asked —
+# without stream_usage the cost meter reads zero for every node that
+# streams (which, under astream's messages mode, is all of them).
+llm = ChatOpenAI(model=os.environ["OPENAI_MODEL"], stream_usage=True)
 
 # Classification and planning want determinism, not creativity: the router
 # and supervisor run at temperature 0 so the same question takes the same
 # path in every class.
-router_llm = ChatOpenAI(model=os.environ["OPENAI_MODEL"], temperature=0)
+router_llm = ChatOpenAI(model=os.environ["OPENAI_MODEL"], temperature=0, stream_usage=True)
 
 ROUTER_PROMPT = (
     "You route requests arriving at an equity research desk. Classify the "
@@ -213,7 +216,9 @@ def guard(state: DeskState) -> dict:
     writer = get_stream_writer()
     latest = state["messages"][-1].content
     # Input rail first: deterministic, token-free, and BEFORE the router —
-    # a blocked message should never reach a model at all.
+    # nothing blocked spends router/supervisor/specialist tokens. (The
+    # memory extractor has already run by design; since Session 09 the cost
+    # event shows that small spend honestly.)
     verdict = screen_input(latest)
     if verdict.action == "block":
         writer({"type": "guardrail", "rail": verdict.rail, "action": "blocked"})
