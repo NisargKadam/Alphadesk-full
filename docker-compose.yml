@@ -1,0 +1,25 @@
+# AlphaDesk — Session 10. `docker compose up --build` is the whole deploy.
+# State (checkpoints, profiles, the Chroma index) lives on the desk-state
+# volume and survives rebuilds; filings mount read-only from the repo.
+# ALPHADESK_PORT picks the host port (default 8000).
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "${ALPHADESK_PORT:-8000}:8000"
+    env_file: backend/.env
+    environment:
+      DESK_DB_PATH: /state/desk_state.db
+      CHROMA_DIR: /state/chroma_db
+    volumes:
+      - desk-state:/state
+      - ./data:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  desk-state:

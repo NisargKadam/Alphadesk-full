@@ -1,0 +1,5 @@
+.venv
+chroma_db
+desk_state.db*
+.env
+**/__pycache__

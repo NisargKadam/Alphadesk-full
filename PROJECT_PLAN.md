@@ -43,12 +43,12 @@ time is spent on frontend code.
    asks educationally (with the disclaimer appended by code, not hoped for
    in a prompt), schema retries at the model boundary, and a tour of the
    failure modes each layer catches. NeMo Guardrails named as the
-   production stack. *← implemented through here*
-9. **Observability & LLMOps** *(ROADMAP)* — tracing across the graph, per-run
-   token/cost accounting emitted on the stream (the pipeline grows a price tag),
-   and evaluation runs wired into the workflow.
-10. **Full-Stack Deployment** *(ROADMAP)* — Docker packaging, health checks, the
-    architecture diagram, and shipping the desk.
+   production stack.
+9. **Observability & LLMOps** — tracing across the graph (Opik, locally hosted),
+   per-run token/cost accounting emitted on the stream (the pipeline grows a
+   price tag), and evaluation runs wired into the workflow.
+10. **Full-Stack Deployment** — Docker packaging, health checks, the
+    architecture diagram, and shipping the desk. *← implemented through here*
 
 After Session 10, one final commit (`ui-final`) delivers the complete UI bench:
 every event the backend learned to emit — nodes, hand-offs, citations, memory,

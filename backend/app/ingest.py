@@ -12,6 +12,7 @@ and reading have opposite size preferences — parent-child serves both.
 """
 
 import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from pypdf import PdfReader
 CHILD_SIZE = 300
 CHILD_OVERLAP = 60
 
-CHROMA_PATH = "./chroma_db"
+CHROMA_PATH = os.getenv("CHROMA_DIR", "./chroma_db")  # Session 10: volume-friendly
 CHILDREN = "filings"          # queried (vector + BM25)
 PARENTS = "filings_parents"   # fetched by id, handed to the model
 

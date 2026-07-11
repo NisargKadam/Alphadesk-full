@@ -10,7 +10,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # backend/.env — secrets stay out of code and out of git
 
+import os  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
@@ -51,6 +53,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health() -> dict:
+    """Session 10: the deploy probe. Best-effort on purpose — a health
+    check that can itself throw is a liveness bug of its own."""
+    chroma = Path(os.getenv("CHROMA_DIR", "./chroma_db"))
+    try:
+        indexed = chroma.is_dir() and any(chroma.iterdir())
+    except OSError:
+        indexed = False
+    return {
+        "status": "ok",
+        "model": os.getenv("OPENAI_MODEL", "unset"),
+        "graph_ready": graph is not None,
+        "filings_indexed": indexed,
+    }
 
 
 class ChatRequest(BaseModel):

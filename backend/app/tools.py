@@ -5,6 +5,8 @@ parent pages for matched children, and re-ranks with a cross-encoder.
 Everything the agent can *do* (beyond talking) lives in this file.
 """
 
+import os
+
 import chromadb
 import yfinance as yf
 from chromadb.config import Settings
@@ -24,7 +26,8 @@ def _collections():
     global _children, _parents
     if _children is None:
         client = chromadb.PersistentClient(
-            path="./chroma_db", settings=Settings(anonymized_telemetry=False)
+            path=os.getenv("CHROMA_DIR", "./chroma_db"),
+            settings=Settings(anonymized_telemetry=False),
         )
         _children = client.get_or_create_collection("filings")
         _parents = client.get_or_create_collection("filings_parents")

@@ -113,9 +113,32 @@ latencies, and token counts) to a locally hosted
 `~/.opik.config` for the server URL. Tracing off or server down: nothing
 changes; observability is strictly additive.
 
+Note: setting `OPIK_TRACING=true` inside the Docker container is a silent
+no-op (the container has no `~/.opik.config` and can't reach a host-local
+Opik on loopback) — tracing is a bare-metal feature for now; see the
+Session 10 notes' stretch item for the compose-profile fix.
+
 With Opik on, `python -m app.eval_retrieval` also logs each run as an
 experiment over the `alphadesk-golden` dataset — retrieval changes get a
 tracked history instead of terminal numbers that scroll away.
+
+## Deploy (Session 10)
+
+```bash
+cp backend/.env.example backend/.env   # set your OpenAI key first
+docker compose up --build
+curl localhost:8000/health
+```
+
+State survives rebuilds on the `desk-state` volume; filings mount read-only
+from `data/`. Ingest inside the container:
+
+```bash
+docker compose exec backend python -m app.ingest /data/filings
+```
+
+Port taken? `ALPHADESK_PORT=8010 docker compose up`. System diagram:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Use AlphaDesk's tools from Claude (Session 04)
 
@@ -152,5 +175,5 @@ calls, consumed by an external agent.
 6. **Multi-Agent Systems** — supervisor, typed hand-offs, specialist sub-agents
 7. **Memory & State** — durable checkpoints, long-term store, summarization
 8. **Guardrails & Safety** — input rails, policy rails, structured-output checks
-9. **Observability & LLMOps** — Opik traces, per-run cost on the stream, eval experiments *(you are here)*
-10. Roadmap: deployment — see [PROJECT_PLAN.md](PROJECT_PLAN.md).
+9. **Observability & LLMOps** — Opik traces, per-run cost on the stream, eval experiments
+10. **Full-Stack Deployment** — Docker packaging, health checks, the architecture diagram *(you are here — curriculum complete)*

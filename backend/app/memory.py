@@ -20,7 +20,10 @@ from pydantic import BaseModel, Field
 # One durable file for the whole desk: the checkpointer's tables and ours
 # live side by side in desk_state.db. Separate connections, shared fate —
 # delete the file and the desk forgets everything, which is the reset story.
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "desk_state.db")
+# Session 10: env-overridable so the container keeps state on a volume.
+DB_PATH = os.getenv(
+    "DESK_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "desk_state.db")
+)
 
 
 def _conn() -> sqlite3.Connection:
